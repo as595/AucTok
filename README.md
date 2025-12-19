@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ### Usage
 
 ```bash
-python scrape_national_lots.py --output national_lots.csv
+python scrape_auctionhouse.py --output properties.csv
 ```
 
 Key options:
