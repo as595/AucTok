@@ -23,7 +23,7 @@ python scrape_auctionhouse.py --output properties.csv
 
 Key options:
 
-- `--sitemap` – provide one or more root sitemaps to crawl (defaults cover both auctionhouse.co.uk and online.auctionhouse.co.uk).
+- `--sitemap` – override the root sitemap URL if the site changes.
 - `--delay` – seconds to sleep between requests (default: 0.75s).
 - `--limit` – cap the number of properties processed (useful for smoke tests).
 - `--include-sold` – keep properties flagged as sold/withdrawn instead of filtering them out.

@@ -15,8 +15,6 @@ import csv
 import logging
 import re
 import sys
-import gzip
-import io
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
@@ -27,10 +25,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-DEFAULT_SITEMAP_URLS = [
-    "https://www.auctionhouse.co.uk/sitemap.xml",
-    "https://online.auctionhouse.co.uk/sitemap.xml",
-]
+DEFAULT_SITEMAP_URL = "https://www.auctionhouse.co.uk/sitemap.xml"
 DEFAULT_DELAY_SEC = 0.75
 DEFAULT_USER_AGENT = "AucTok-scraper/0.1 (+https://example.com/contact)"
 
@@ -62,20 +57,20 @@ def build_session(user_agent: str = DEFAULT_USER_AGENT) -> requests.Session:
     return session
 
 
-def fetch_content(
+def fetch_text(
     session: requests.Session,
     url: str,
     *,
     retries: int = 3,
     backoff: float = 1.5,
     timeout: int = 30,
-) -> bytes:
+) -> str:
     last_error: Optional[Exception] = None
     for attempt in range(1, retries + 1):
         try:
             response = session.get(url, timeout=timeout)
             response.raise_for_status()
-            return response.content
+            return response.text
         except Exception as exc:  # requests can raise many subclasses
             last_error = exc
             if attempt >= retries:
@@ -86,58 +81,21 @@ def fetch_content(
     raise RuntimeError(f"Failed to fetch {url}: {last_error}")
 
 
-def fetch_text(
-    session: requests.Session,
-    url: str,
-    *,
-    retries: int = 3,
-    backoff: float = 1.5,
-    timeout: int = 30,
-) -> str:
-    """Fetch text content, handling gzip-compressed payloads."""
-
-    raw = fetch_content(
-        session,
-        url,
-        retries=retries,
-        backoff=backoff,
-        timeout=timeout,
-    )
-
-    if url.lower().endswith(".gz"):
-        try:
-            raw = gzip.decompress(raw)
-        except OSError:
-            # Some servers return gzip files without headers; fall back to stream
-            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
-                raw = gz.read()
-
-    return raw.decode("utf-8", errors="replace")
-
-
 def looks_like_property_url(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower()
-    property_markers = [
-        "/property/",
-        "/properties/",
-        "/property-details",
-        "/lot/",
-        "/lot-details",
-    ]
-    return any(marker in path for marker in property_markers)
+    return "/property/" in path or "/properties/" in path
 
 
 def iter_sitemap_property_urls(
     session: requests.Session,
-    root_sitemaps: Optional[Iterable[str]] = None,
+    root_sitemap: str = DEFAULT_SITEMAP_URL,
     *,
-    max_nested: int = 1000,
+    max_nested: int = 100,
 ) -> List[str]:
     """Return property detail URLs referenced anywhere in the sitemap graph."""
 
-    seeds = list(root_sitemaps) if root_sitemaps else list(DEFAULT_SITEMAP_URLS)
-    to_visit = list(seeds)
+    to_visit = [root_sitemap]
     visited: Set[str] = set()
     property_urls: Set[str] = set()
 
@@ -164,7 +122,7 @@ def iter_sitemap_property_urls(
                 if len(visited) + len(to_visit) >= max_nested:
                     logging.warning("Skipping sitemap %s; max depth %s reached", loc_text, max_nested)
                     continue
-                if loc_text.endswith((".xml", ".xml.gz")):
+                if loc_text.endswith(".xml"):
                     to_visit.append(loc_text)
         else:
             for loc in root.findall(".//{*}loc"):
@@ -290,7 +248,7 @@ def run(args: argparse.Namespace) -> int:
     session = build_session(args.user_agent)
 
     try:
-        property_urls = iter_sitemap_property_urls(session, args.sitemaps)
+        property_urls = iter_sitemap_property_urls(session, args.sitemap)
     except Exception as exc:
         logging.error("Could not read sitemap: %s", exc)
         return 1
@@ -321,15 +279,7 @@ def run(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scrape Auction House UK property details")
     parser.add_argument("--output", default="auctionhouse_properties.csv", help="CSV destination path")
-    parser.add_argument(
-        "--sitemap",
-        dest="sitemaps",
-        action="append",
-        help=(
-            "Root sitemap URL to crawl; can be provided multiple times. "
-            "Defaults to both auctionhouse.co.uk and online.auctionhouse.co.uk."
-        ),
-    )
+    parser.add_argument("--sitemap", default=DEFAULT_SITEMAP_URL, help="Root sitemap URL")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY_SEC, help="Delay between requests (seconds)")
     parser.add_argument("--limit", type=int, help="Maximum number of properties to fetch (for testing)")
     parser.add_argument("--include-sold", action="store_true", help="Include properties flagged as sold/withdrawn")
