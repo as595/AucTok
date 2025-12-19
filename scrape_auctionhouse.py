@@ -15,8 +15,6 @@ import csv
 import logging
 import re
 import sys
-import gzip
-import io
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
@@ -59,20 +57,20 @@ def build_session(user_agent: str = DEFAULT_USER_AGENT) -> requests.Session:
     return session
 
 
-def fetch_content(
+def fetch_text(
     session: requests.Session,
     url: str,
     *,
     retries: int = 3,
     backoff: float = 1.5,
     timeout: int = 30,
-) -> bytes:
+) -> str:
     last_error: Optional[Exception] = None
     for attempt in range(1, retries + 1):
         try:
             response = session.get(url, timeout=timeout)
             response.raise_for_status()
-            return response.content
+            return response.text
         except Exception as exc:  # requests can raise many subclasses
             last_error = exc
             if attempt >= retries:
@@ -83,53 +81,17 @@ def fetch_content(
     raise RuntimeError(f"Failed to fetch {url}: {last_error}")
 
 
-def fetch_text(
-    session: requests.Session,
-    url: str,
-    *,
-    retries: int = 3,
-    backoff: float = 1.5,
-    timeout: int = 30,
-) -> str:
-    """Fetch text content, handling gzip-compressed payloads."""
-
-    raw = fetch_content(
-        session,
-        url,
-        retries=retries,
-        backoff=backoff,
-        timeout=timeout,
-    )
-
-    if url.lower().endswith(".gz"):
-        try:
-            raw = gzip.decompress(raw)
-        except OSError:
-            # Some servers return gzip files without headers; fall back to stream
-            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
-                raw = gz.read()
-
-    return raw.decode("utf-8", errors="replace")
-
-
 def looks_like_property_url(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower()
-    property_markers = [
-        "/property/",
-        "/properties/",
-        "/property-details",
-        "/lot/",
-        "/lot-details",
-    ]
-    return any(marker in path for marker in property_markers)
+    return "/property/" in path or "/properties/" in path
 
 
 def iter_sitemap_property_urls(
     session: requests.Session,
     root_sitemap: str = DEFAULT_SITEMAP_URL,
     *,
-    max_nested: int = 1000,
+    max_nested: int = 100,
 ) -> List[str]:
     """Return property detail URLs referenced anywhere in the sitemap graph."""
 
